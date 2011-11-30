@@ -37,10 +37,12 @@
 
 #define MAX_PACKET_LENGTH 4096
 
+//#define TRACEPOINT_COEN283 1
+
 #include "cpu.h"
 #include "qemu_socket.h"
 #include "kvm.h"
-
+#include "tracepoint.h"
 
 enum {
     GDB_SIGNAL_0 = 0,
@@ -258,7 +260,7 @@ static int gdb_signal_to_target (int sig)
         return -1;
 }
 
-//#define DEBUG_GDB
+#define DEBUG_GDB
 
 typedef struct GDBRegisterState {
     int base_reg;
@@ -1843,6 +1845,20 @@ static CPUState *find_cpu(uint32_t thread_id)
     return NULL;
 }
 
+/* Tracepoint implementation functions */
+
+int handle_tracepoint_packets(const char *cmd)
+{
+	if ( strncmp(cmd, "init", 4) == 0 ) { /* QTstart Packet or tstart command  */ 
+		return 0;
+	} else if ( strncmp(cmd, "DP", 2) == 0 ) {/* QTDP command. Definition of the tracepoint we have defined  */
+		printf("Tracepoint definition received\n");
+		return 0;
+	}
+
+	return -1;
+}
+
 static int gdb_handle_packet(GDBState *s, const char *line_buf)
 {
     CPUState *env;
@@ -2247,7 +2263,21 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
             break;
         }
 #endif
-        /* Unrecognised 'q' command.  */
+
+#ifdef TRACEPOINT_COEN283
+		/* Is this a tracepoint packet?  */
+
+		if ( strncmp(p, "T", 1) == 0 ) {
+			/* OK, we are in business  */
+
+			p++;
+			if ( handle_tracepoint_packets(p) == 0 ) {
+				put_packet(s, "OK");
+				break;
+			}
+		}
+#endif /* TRACEPOINT_COEN283  */
+		/* Unrecognised 'q' command.  */
         goto unknown_command;
 
     default:
