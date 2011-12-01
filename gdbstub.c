@@ -37,7 +37,7 @@
 
 #define MAX_PACKET_LENGTH 4096
 
-//#define TRACEPOINT_COEN283 1
+#define TRACEPOINT_COEN283 1
 
 #include "cpu.h"
 #include "qemu_socket.h"
@@ -1845,14 +1845,29 @@ static CPUState *find_cpu(uint32_t thread_id)
     return NULL;
 }
 
-/* Tracepoint implementation functions */
 
+int cmd_qtdp ( const char *cmd ) 
+{
+	return 0;
+}
+
+/* Tracepoint implementation functions */
 int handle_tracepoint_packets(const char *cmd)
 {
 	if ( strncmp(cmd, "init", 4) == 0 ) { /* QTstart Packet or tstart command  */ 
+		// We can ignore this for now and start the qemu everytime fresh
 		return 0;
 	} else if ( strncmp(cmd, "DP", 2) == 0 ) {/* QTDP command. Definition of the tracepoint we have defined  */
-		printf("Tracepoint definition received\n");
+		return cmd_qtdp(cmd);
+	} else if ( strncmp(cmd, "ro", 2) == 0 ) {
+		return 0;
+	} else if ( strncmp(cmd, "Buffer", 6) == 0 ) {
+		return 0;
+	} else if ( strncmp(cmd, "Start", 5) == 0 ) {
+		return 0;
+	} else if ( strncmp(cmd, "Stop", 4) == 0 ) {
+		return 0;
+	} else if ( strncmp(cmd, "Frame", 5) == 0 ) {
 		return 0;
 	}
 
