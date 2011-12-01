@@ -107,5 +107,6 @@ int handle_tracepoint_packets(const char *cmd);
 static int cmd_qtdp(const char *cmd);
 char * unpack_varlen_hex (char *buff,  ULONGEST *result);
 void convert_ascii_to_int (const char *from, unsigned char *to, int n);
+static int cmd_qtro (const char *own_buf);
 
 #endif /* __TRACEPOINT_H__  */

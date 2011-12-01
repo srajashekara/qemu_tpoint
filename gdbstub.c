@@ -2263,6 +2263,68 @@ static int cmd_qtdp (const char *own_buf)
   return 0;
 }
 
+struct readonly_region
+{
+	  /* The bounds of the region.  */
+	  CORE_ADDR start, end;
+
+	    /* Link to the next one.  */
+	    struct readonly_region *next;
+};
+
+static struct readonly_region *readonly_regions;
+
+static void
+clear_readonly_regions (void)
+{
+	struct readonly_region *roreg;
+
+	while (readonly_regions)
+	{
+		roreg = readonly_regions;
+		readonly_regions = readonly_regions->next;
+		free (roreg);
+	}
+}
+
+
+/* Parse the collection of address ranges whose contents GDB believes
+   to be unchanging and so can be read directly from target memory
+   even while looking at a traceframe.  */
+
+static int cmd_qtro (const char *own_buf)
+{
+  ULONGEST start, end;
+  struct readonly_region *roreg;
+  char *packet = (char *)own_buf;
+
+  printf ("Want to mark readonly regions");
+
+  clear_readonly_regions ();
+
+  packet += strlen ("QTro");
+
+  while (*packet == ':')
+    {
+      ++packet;  /* skip a colon */
+      packet = unpack_varlen_hex (packet, &start);
+      ++packet;  /* skip a comma */
+      packet = unpack_varlen_hex (packet, &end);
+      roreg = malloc (sizeof (struct readonly_region));
+      roreg->start = start;
+      roreg->end = end;
+      roreg->next = readonly_regions;
+      readonly_regions = roreg;
+#if 0	  
+      trace_debug ("Added readonly region from 0x%s to 0x%s",
+		   paddress (roreg->start), paddress (roreg->end));
+#endif	  
+    }
+
+  return 0;
+}
+
+
 /* Tracepoint implementation functions */
 int handle_tracepoint_packets(const char *cmd)
 {
@@ -2272,7 +2334,7 @@ int handle_tracepoint_packets(const char *cmd)
 	} else if ( strncmp(cmd, "DP", 2) == 0 ) {/* QTDP command. Definition of the tracepoint we have defined  */
 		return cmd_qtdp(cmd);
 	} else if ( strncmp(cmd, "ro", 2) == 0 ) {
-		return 0;
+		return cmd_qtro(cmd);
 	} else if ( strncmp(cmd, "Buffer", 6) == 0 ) {
 		return 0;
 	} else if ( strncmp(cmd, "Start", 5) == 0 ) {
