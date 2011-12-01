@@ -1845,15 +1845,20 @@ static CPUState *find_cpu(uint32_t thread_id)
     return NULL;
 }
 
-/* Tracepoint implementation functions */
 
+int cmd_qtdp ( const char *cmd ) 
+{
+	return 0;
+}
+
+/* Tracepoint implementation functions */
 int handle_tracepoint_packets(const char *cmd)
 {
 	if ( strncmp(cmd, "init", 4) == 0 ) { /* QTstart Packet or tstart command  */ 
 		// We can ignore this for now and start the qemu everytime fresh
 		return 0;
 	} else if ( strncmp(cmd, "DP", 2) == 0 ) {/* QTDP command. Definition of the tracepoint we have defined  */
-		return 0;
+		return cmd_qtdp(cmd);
 	} else if ( strncmp(cmd, "ro", 2) == 0 ) {
 		return 0;
 	} else if ( strncmp(cmd, "Buffer", 6) == 0 ) {
