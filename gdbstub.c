@@ -1846,7 +1846,7 @@ static CPUState *find_cpu(uint32_t thread_id)
 }
 
 
-static struct tracepoint *tp;
+static struct tracepoint *tp = NULL;
 static int seen_step_action_flag;
 
 static const char hexchars[] = "0123456789abcdef";
@@ -2057,6 +2057,8 @@ add_tracepoint_action (struct tracepoint *tpoint, char *packet)
 	    maction->basereg = (is_neg
 				? - (int) basereg
 				: (int) basereg);
+
+	    printf ("Want to collect some bytes\n");
 #if 0
 		trace_debug ("Want to collect %s bytes at 0x%s (basereg %d)",
 			 pulongest (maction->len),
@@ -2072,7 +2074,7 @@ add_tracepoint_action (struct tracepoint *tpoint, char *packet)
 	    raction->base.type = *act;
 	    action = &raction->base;
 
-	    printf ("Want to collect registers");
+	    printf ("Want to collect registers\n");
 	    ++act;
 	    /* skip past hex digits of mask for now */
 	    while (isxdigit(*act))
@@ -2087,12 +2089,12 @@ add_tracepoint_action (struct tracepoint *tpoint, char *packet)
 	    raction->base.type = *act;
 	    action = &raction->base;
 
-	    printf ("Want to collect static trace data");
+	    printf ("Want to collect static trace data\n");
 	    ++act;
 	    break;
 	  }
 	case 'S':
-	  printf ("Unexpected step action, ignoring");
+	  printf ("Unexpected step action, ignoring\n");
 	  ++act;
 	  break;
 	case 'X':
@@ -2103,12 +2105,12 @@ add_tracepoint_action (struct tracepoint *tpoint, char *packet)
 	    xaction->base.type = *act;
 	    action = &xaction->base;
 
-	    printf ("Want to evaluate expression");
+	    printf ("Want to evaluate expression\n");
 	    xaction->expr = parse_agent_expr (&act);
 	    break;
 	  }
 	default:
-	  printf ("unknown trace action '%c', ignoring...", *act);
+	  printf ("unknown trace action '%c', ignoring...\n", *act);
 	  break;
 	case '-':
 	  break;
@@ -2162,7 +2164,7 @@ static int cmd_qtdp (const char *own_buf)
   char *actparm;
   char *packet = (char *)own_buf;
 
-  packet += strlen ("QTDP:");
+  packet += strlen ("DP:");
 
   /* A hyphen at the beginning marks a packet specifying actions for a
      tracepoint already supplied.  */
@@ -2183,6 +2185,8 @@ static int cmd_qtdp (const char *own_buf)
   /* See if we already have this tracepoint.  */
   tpoint = find_tracepoint (num, addr);
 #endif
+  tpoint = tp;
+
   if (tppacket)
     {
 #if 0		
@@ -2233,7 +2237,7 @@ static int cmd_qtdp (const char *own_buf)
 	  else if (*packet == '\0')
 	    break;
 	  else
-	    printf ("Unknown optional tracepoint field");
+	    printf ("Unknown optional tracepoint field\n");
 	}
       if (*packet == '-')
 	printf ("Also has actions\n");
@@ -2298,11 +2302,11 @@ static int cmd_qtro (const char *own_buf)
   struct readonly_region *roreg;
   char *packet = (char *)own_buf;
 
-  printf ("Want to mark readonly regions");
+  printf ("Want to mark readonly regions\n");
 
   clear_readonly_regions ();
 
-  packet += strlen ("QTro");
+  packet += strlen ("ro");
 
   while (*packet == ':')
     {
