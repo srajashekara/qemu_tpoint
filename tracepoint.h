@@ -2,6 +2,7 @@
 #define __TRACEPOINT_H__
 
 typedef unsigned int CORE_ADDR;
+typedef unsigned long ULONGEST;
 
 enum tracepoint_type
 {
@@ -15,7 +16,6 @@ enum tracepoint_type
 	   library.  */
 	static_tracepoint
 };
-
 
 
 struct tracepoint
@@ -59,7 +59,6 @@ struct tracepoint
   /* Link to the next tracepoint in the list.  */
   struct tracepoint *next;
 
-#ifndef IN_PROCESS_AGENT
   /* The list of actions to take when the tracepoint triggers, in
      string/packet form.  */
   char **actions_str;
@@ -100,11 +99,14 @@ struct tracepoint
      inserted the trap or jump, or hooked into a static tracepoint.
      NULL if we haven't inserted it yet.  */
   void *handle;
-#endif
 };
 
 
+
 int handle_tracepoint_packets(const char *cmd);
-int cmd_qtdp(const char *cmd);
+static int cmd_qtdp(const char *cmd);
+char * unpack_varlen_hex (char *buff,  ULONGEST *result);
+void convert_ascii_to_int (const char *from, unsigned char *to, int n);
+static int cmd_qtro (const char *own_buf);
 
 #endif /* __TRACEPOINT_H__  */

@@ -1846,10 +1846,488 @@ static CPUState *find_cpu(uint32_t thread_id)
 }
 
 
-int cmd_qtdp ( const char *cmd ) 
+static struct tracepoint *tp = NULL;
+static int seen_step_action_flag;
+
+static const char hexchars[] = "0123456789abcdef";
+
+static int
+ishex (int ch, int *val)
 {
+	if ((ch >= 'a') && (ch <= 'f'))
+	{
+		*val = ch - 'a' + 10;
+		return 1;
+	}
+	if ((ch >= 'A') && (ch <= 'F'))
+	{
+		*val = ch - 'A' + 10;
+		return 1;
+	}
+	if ((ch >= '0') && (ch <= '9'))
+	{
+		*val = ch - '0';
+		return 1;
+	}
 	return 0;
 }
+
+
+char * unpack_varlen_hex (char *buff,	/* packet to parse */
+		   ULONGEST *result)
+{
+  int nibble;
+  ULONGEST retval = 0;
+
+  while (ishex (*buff, &nibble))
+    {
+      buff++;
+      retval = retval << 4;
+      retval |= nibble & 0x0f;
+    }
+  *result = retval;
+  return buff;
+}
+
+struct agent_expr
+{
+	int length;
+
+	unsigned char *bytes;
+};
+
+void convert_ascii_to_int (const char *from, unsigned char *to, int n)
+{
+	int nib1, nib2;
+	while (n--)
+	{
+		nib1 = fromhex (*from++);
+		nib2 = fromhex (*from++);
+		*to++ = (((nib1 & 0x0f) << 4) & 0xf0) | (nib2 & 0x0f);
+	}
+}
+
+
+static struct agent_expr *
+parse_agent_expr (char **actparm)
+{
+	char *act = *actparm;
+	ULONGEST xlen;
+	struct agent_expr *aexpr;
+
+	++act;  /* skip the X */
+	act = unpack_varlen_hex (act, &xlen);
+	++act;  /* skip a comma */
+	aexpr = malloc (sizeof (struct agent_expr));
+	aexpr->length = xlen;
+	aexpr->bytes = malloc (xlen);
+	convert_ascii_to_int (act, aexpr->bytes, xlen);
+	*actparm = act + (xlen * 2);
+	return aexpr;
+}
+
+
+static struct tracepoint *
+add_tracepoint (int num, CORE_ADDR addr)
+{
+	struct tracepoint *tpoint;
+
+	tpoint = malloc (sizeof (struct tracepoint));
+	tpoint->number = num;
+	tpoint->address = addr;
+	tpoint->numactions = 0;
+	tpoint->actions = NULL;
+	tpoint->actions_str = NULL;
+	tpoint->cond = NULL;
+	tpoint->num_step_actions = 0;
+	tpoint->step_actions = NULL;
+	tpoint->step_actions_str = NULL;
+	/* Start all off as regular (slow) tracepoints.  */
+	tpoint->type = trap_tracepoint;
+	tpoint->orig_size = -1;
+	tpoint->source_strings = NULL;
+	tpoint->compiled_cond = 0;
+	tpoint->handle = NULL;
+	tpoint->next = NULL;
+
+	tp = tpoint;
+#if 0
+	if (!last_tracepoint)
+		tracepoints = tpoint;
+	else
+		last_tracepoint->next = tpoint;
+	last_tracepoint = tpoint;
+#endif
+	seen_step_action_flag = 0;
+
+	return tpoint;
+}
+
+
+struct tracepoint_action
+{
+	  char type;
+};
+
+
+struct collect_memory_action
+{
+	struct tracepoint_action base;
+
+	ULONGEST addr;
+	ULONGEST len;
+	int basereg;
+};
+
+struct collect_registers_action
+{
+	  struct tracepoint_action base;
+};
+
+/* An 'L' (collect static trace data) action.  */
+struct collect_static_trace_data_action
+{
+	  struct tracepoint_action base;
+};
+
+
+/* An 'X' (evaluate expression) action.  */
+
+struct eval_expr_action
+{
+	  struct tracepoint_action base;
+
+	    struct agent_expr *expr;
+};
+
+
+	static char *
+save_string (const char *str, size_t len)
+{
+	char *s;
+
+	s = malloc (len + 1);
+	memcpy (s, str, len);
+	s[len] = '\0';
+
+	return s;
+}
+
+/* Append another action to perform when the tracepoint triggers.  */
+
+static void
+add_tracepoint_action (struct tracepoint *tpoint, char *packet)
+{
+  char *act;
+
+  if (*packet == 'S')
+    {
+      seen_step_action_flag = 1;
+      ++packet;
+    }
+
+  act = packet;
+
+  while (*act)
+    {
+      char *act_start = act;
+      struct tracepoint_action *action = NULL;
+
+      switch (*act)
+	{
+	case 'M':
+	  {
+	    struct collect_memory_action *maction;
+	    ULONGEST basereg;
+	    int is_neg;
+
+	    maction = malloc (sizeof *maction);
+	    maction->base.type = *act;
+	    action = &maction->base;
+
+	    ++act;
+	    is_neg = (*act == '-');
+	    if (*act == '-')
+	      ++act;
+	    act = unpack_varlen_hex (act, &basereg);
+	    ++act;
+	    act = unpack_varlen_hex (act, &maction->addr);
+	    ++act;
+	    act = unpack_varlen_hex (act, &maction->len);
+	    maction->basereg = (is_neg
+				? - (int) basereg
+				: (int) basereg);
+
+	    printf ("Want to collect some bytes\n");
+#if 0
+		trace_debug ("Want to collect %s bytes at 0x%s (basereg %d)",
+			 pulongest (maction->len),
+			 paddress (maction->addr), maction->basereg);
+#endif		
+	    break;
+	  }
+	case 'R':
+	  {
+	    struct collect_registers_action *raction;
+
+	    raction = malloc (sizeof *raction);
+	    raction->base.type = *act;
+	    action = &raction->base;
+
+	    printf ("Want to collect registers\n");
+	    ++act;
+	    /* skip past hex digits of mask for now */
+	    while (isxdigit(*act))
+	      ++act;
+	    break;
+	  }
+	case 'L':
+	  {
+	    struct collect_static_trace_data_action *raction;
+
+	    raction = malloc (sizeof *raction);
+	    raction->base.type = *act;
+	    action = &raction->base;
+
+	    printf ("Want to collect static trace data\n");
+	    ++act;
+	    break;
+	  }
+	case 'S':
+	  printf ("Unexpected step action, ignoring\n");
+	  ++act;
+	  break;
+	case 'X':
+	  {
+	    struct eval_expr_action *xaction;
+
+	    xaction = malloc (sizeof (*xaction));
+	    xaction->base.type = *act;
+	    action = &xaction->base;
+
+	    printf ("Want to evaluate expression\n");
+	    xaction->expr = parse_agent_expr (&act);
+	    break;
+	  }
+	default:
+	  printf ("unknown trace action '%c', ignoring...\n", *act);
+	  break;
+	case '-':
+	  break;
+	}
+
+      if (action == NULL)
+	break;
+
+      if (seen_step_action_flag)
+	{
+	  tpoint->num_step_actions++;
+
+	  tpoint->step_actions
+	    = realloc (tpoint->step_actions,
+			(sizeof (*tpoint->step_actions)
+			 * tpoint->num_step_actions));
+	  tpoint->step_actions_str
+	    = realloc (tpoint->step_actions_str,
+			(sizeof (*tpoint->step_actions_str)
+			 * tpoint->num_step_actions));
+	  tpoint->step_actions[tpoint->num_step_actions - 1] = action;
+	  tpoint->step_actions_str[tpoint->num_step_actions - 1]
+	    = save_string (act_start, act - act_start);
+	}
+      else
+	{
+	  tpoint->numactions++;
+	  tpoint->actions
+	    = realloc (tpoint->actions,
+			sizeof (*tpoint->actions) * tpoint->numactions);
+	  tpoint->actions_str
+	    = realloc (tpoint->actions_str,
+			sizeof (*tpoint->actions_str) * tpoint->numactions);
+	  tpoint->actions[tpoint->numactions - 1] = action;
+	  tpoint->actions_str[tpoint->numactions - 1]
+	    = save_string (act_start, act - act_start);
+	}
+    }
+}
+
+
+
+/* Parse a packet that defines a tracepoint.  */
+static int cmd_qtdp (const char *own_buf)
+{
+  int tppacket;
+  ULONGEST num;
+  ULONGEST addr;
+  ULONGEST count;
+  struct tracepoint *tpoint;
+  char *actparm;
+  char *packet = (char *)own_buf;
+
+  packet += strlen ("DP:");
+
+  /* A hyphen at the beginning marks a packet specifying actions for a
+     tracepoint already supplied.  */
+  tppacket = 1;
+  if (*packet == '-')
+    {
+      tppacket = 0;
+      ++packet;
+    }
+  packet = unpack_varlen_hex (packet, &num);
+  ++packet; /* skip a colon */
+  packet = unpack_varlen_hex (packet, &addr);
+  ++packet; /* skip a colon */
+
+  /* I am concentrating at getting only one tracepoint working. I don't care if
+   * multiple instances do not work*/
+#if 0
+  /* See if we already have this tracepoint.  */
+  tpoint = find_tracepoint (num, addr);
+#endif
+  tpoint = tp;
+
+  if (tppacket)
+    {
+#if 0		
+      /* Duplicate tracepoints are never allowed.  */
+      if (tpoint)
+	{
+	  printf ("Tracepoint error: tracepoint %d"
+		       " at 0x%s already exists",
+		       (int) num, paddress (addr));
+	  write_enn (own_buf);
+	  return;
+	}
+#endif
+      tpoint = add_tracepoint (num, addr);
+
+      tpoint->enabled = (*packet == 'E');
+      ++packet; /* skip 'E' */
+      ++packet; /* skip a colon */
+      packet = unpack_varlen_hex (packet, &count);
+      tpoint->step_count = count;
+      ++packet; /* skip a colon */
+      packet = unpack_varlen_hex (packet, &count);
+      tpoint->pass_count = count;
+      /* See if we have any of the additional optional fields.  */
+      while (*packet == ':')
+	{
+	  ++packet;
+	  if (*packet == 'F')
+	    {
+	      tpoint->type = fast_tracepoint;
+	      ++packet;
+	      packet = unpack_varlen_hex (packet, &count);
+	      tpoint->orig_size = count;
+	    }
+	  else if (*packet == 'S')
+	    {
+	      tpoint->type = static_tracepoint;
+	      ++packet;
+	    }
+	  else if (*packet == 'X')
+	    {
+	      actparm = (char *) packet;
+	      tpoint->cond = parse_agent_expr (&actparm);
+	      packet = actparm;
+	    }
+	  else if (*packet == '-')
+	    break;
+	  else if (*packet == '\0')
+	    break;
+	  else
+	    printf ("Unknown optional tracepoint field\n");
+	}
+      if (*packet == '-')
+	printf ("Also has actions\n");
+
+	  printf("Defined Tracepoint\n");
+#if 0
+      printf ("Defined %stracepoint %d at 0x%s, "
+		   "enabled %d step %ld pass %ld",
+		   tpoint->type == fast_tracepoint ? "fast "
+		   : "",
+		   tpoint->number, paddress (tpoint->address), tpoint->enabled,
+		   tpoint->step_count, tpoint->pass_count);
+#endif	  
+    }
+  else if (tpoint)
+    add_tracepoint_action (tpoint, packet);
+  else
+    {
+		printf("Tracepoint Error\n");
+#if 0		
+      printf ("Tracepoint error: tracepoint %d at 0x%s not found",
+		   (int) num, paddress (addr));
+#endif	  
+      return -1;
+    }
+
+  return 0;
+}
+
+struct readonly_region
+{
+	  /* The bounds of the region.  */
+	  CORE_ADDR start, end;
+
+	    /* Link to the next one.  */
+	    struct readonly_region *next;
+};
+
+static struct readonly_region *readonly_regions;
+
+static void
+clear_readonly_regions (void)
+{
+	struct readonly_region *roreg;
+
+	while (readonly_regions)
+	{
+		roreg = readonly_regions;
+		readonly_regions = readonly_regions->next;
+		free (roreg);
+	}
+}
+
+
+/* Parse the collection of address ranges whose contents GDB believes
+   to be unchanging and so can be read directly from target memory
+   even while looking at a traceframe.  */
+
+static int cmd_qtro (const char *own_buf)
+{
+  ULONGEST start, end;
+  struct readonly_region *roreg;
+  char *packet = (char *)own_buf;
+
+  printf ("Want to mark readonly regions\n");
+
+  clear_readonly_regions ();
+
+  packet += strlen ("ro");
+
+  while (*packet == ':')
+    {
+      ++packet;  /* skip a colon */
+      packet = unpack_varlen_hex (packet, &start);
+      ++packet;  /* skip a comma */
+      packet = unpack_varlen_hex (packet, &end);
+      roreg = malloc (sizeof (struct readonly_region));
+      roreg->start = start;
+      roreg->end = end;
+      roreg->next = readonly_regions;
+      readonly_regions = roreg;
+#if 0	  
+      trace_debug ("Added readonly region from 0x%s to 0x%s",
+		   paddress (roreg->start), paddress (roreg->end));
+#endif	  
+    }
+
+  return 0;
+}
+
 
 /* Tracepoint implementation functions */
 int handle_tracepoint_packets(const char *cmd)
@@ -1860,7 +2338,7 @@ int handle_tracepoint_packets(const char *cmd)
 	} else if ( strncmp(cmd, "DP", 2) == 0 ) {/* QTDP command. Definition of the tracepoint we have defined  */
 		return cmd_qtdp(cmd);
 	} else if ( strncmp(cmd, "ro", 2) == 0 ) {
-		return 0;
+		return cmd_qtro(cmd);
 	} else if ( strncmp(cmd, "Buffer", 6) == 0 ) {
 		return 0;
 	} else if ( strncmp(cmd, "Start", 5) == 0 ) {
